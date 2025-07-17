@@ -16,12 +16,7 @@ config.yaml
 config.yml
 secrets.json
 
-# Build and Distribution
-# ----------------------
-/build
-/dist
-build/
-dist/
+
 
 # Python
 # ------
