@@ -12,13 +12,13 @@ from config import Config
 def open_browser():
     """延迟打开浏览器"""
     time.sleep(2)  # 等待服务器启动
-    webbrowser.open('http://localhost:5000')
+    webbrowser.open('http://localhost:5001')
 
 app = create_app()
 
 if __name__ == '__main__':
     print("正在启动密码重置应用...")
-    print("服务器将在 http://localhost:5000 启动")
+    print("服务器将在 http://localhost:5001 启动")
     print("请在浏览器中访问上述地址来使用密码重置功能")
     print("按 Ctrl+C 停止服务器")
     
@@ -29,6 +29,6 @@ if __name__ == '__main__':
     
     try:
         # 生产环境设置，不使用调试模式和重载器
-        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         print("\n服务器已停止")
