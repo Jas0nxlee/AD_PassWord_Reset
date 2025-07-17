@@ -1,0 +1,152 @@
+# =============================================
+# AD Password Reset Application .gitignore
+# =============================================
+
+# Environment Variables and Configuration
+# ----------------------------------------
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+
+# Sensitive Configuration Files
+config.ini
+config.yaml
+config.yml
+secrets.json
+
+# Build and Distribution
+# ----------------------
+/build
+/dist
+build/
+dist/
+
+# Python
+# ------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Virtual Environment
+# -------------------
+venv/
+ENV/
+env/
+.venv/
+.ENV/
+.env/
+
+# PyInstaller
+# -----------
+*.manifest
+*.spec
+build/
+dist/
+
+# Logs and Debugging
+# ------------------
+logs/
+*.log
+*.log.*
+debug.log
+error.log
+app.log
+audit.log
+
+# Database
+# --------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# IDE and Editor Files
+# --------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Windows
+# -------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+# -----
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary Files
+# ---------------
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# SSL Certificates and Keys
+# -------------------------
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+
+# Test Coverage
+# -------------
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Documentation Build
+# -------------------
+docs/_build/
+
+# Node.js (if using frontend build tools)
+# ----------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package Files
+# -------------
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Security and Sensitive Data
+# ----------------------------
+passwords.txt
+secrets/
+private/
+confidential/
+
+# Backup Files
+# ------------
+*.backup
+*.bak
+*.old
+*~
