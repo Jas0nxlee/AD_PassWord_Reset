@@ -45,8 +45,8 @@ env/
 # -----------
 *.manifest
 *.spec
-build/
-dist/
+
+
 
 # Logs and Debugging
 # ------------------
