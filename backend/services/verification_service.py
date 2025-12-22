@@ -10,12 +10,22 @@ class VerificationService:
 
     def generate_code(self, identifier):
         """为指定标识符生成验证码"""
+        # 清理过期验证码，防止内存泄漏
+        self._cleanup_expired()
         code = ''.join(random.choices(string.digits, k=self.code_length))
         self.codes[identifier] = {
             'code': code,
             'timestamp': time.time()
         }
         return code
+
+    def _cleanup_expired(self):
+        """清理所有已过期的验证码"""
+        current_time = time.time()
+        expired_keys = [k for k, v in self.codes.items() 
+                        if current_time - v['timestamp'] > self.expire_time]
+        for key in expired_keys:
+            del self.codes[key]
 
     def verify_code(self, identifier, code):
         """验证指定标识符的验证码"""

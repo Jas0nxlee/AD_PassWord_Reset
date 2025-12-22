@@ -50,11 +50,11 @@ def create_app():
     # 注册中间件
     register_middleware(app)
 
-    # @app.before_request
-    # def csrf_protect():
-    #     if request.method == "POST":
-    #         if not validate_csrf_token():
-    #             return jsonify({'error': 'CSRF token missing or invalid'}), 400
+    @app.before_request
+    def csrf_protect():
+        if request.method == "POST":
+            if not validate_csrf_token():
+                return jsonify({'error': 'CSRF token missing or invalid'}), 400
 
     @app.after_request
     def set_csrf_cookie(response):

@@ -4,6 +4,7 @@ import subprocess
 import sys
 from ldap3 import Server, Connection, ALL, MODIFY_REPLACE, NTLM, SIMPLE
 from ldap3.core.exceptions import LDAPException
+from ldap3.utils.conv import escape_filter_chars
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,14 +13,8 @@ from config import Config
 # Set OpenSSL configuration to enable legacy algorithms (MD4) for NTLM authentication
 os.environ['OPENSSL_CONF'] = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'legacy-openssl.cnf')
 
-# Try to enable legacy providers for OpenSSL
-try:
-    import ssl
-    # Force reload of ssl module with new OpenSSL config
-    if hasattr(ssl, '_create_unverified_context'):
-        ssl._create_default_https_context = ssl._create_unverified_context
-except Exception as e:
-    print(f"Warning: Could not configure SSL for legacy support: {e}")
+# 注意：SSL 验证应保持启用状态以确保安全
+# 如果使用自签名证书，请在 TLS 配置中指定 CA 文件路径
 
 class LDAPService:
     def __init__(self):
@@ -99,7 +94,9 @@ class LDAPService:
         if not self.conn and not self.connect():
             return None
         
-        search_filter = f"(&(objectClass=user)(sAMAccountName={username}))"
+        # 使用 escape_filter_chars 防止 LDAP 注入攻击
+        safe_username = escape_filter_chars(username)
+        search_filter = f"(&(objectClass=user)(sAMAccountName={safe_username}))"
         try:
             self.conn.search(self.base_dn, search_filter, attributes=['distinguishedName', 'mail', 'sAMAccountName', 'cn'])
             if self.conn.entries:

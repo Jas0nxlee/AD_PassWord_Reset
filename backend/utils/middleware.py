@@ -10,7 +10,12 @@ def register_middleware(app):
         """在每次请求前记录请求信息"""
         app.logger.info('Request: %s %s', request.method, request.path)
         app.logger.info('Headers: %s', request.headers)
-        app.logger.info('Body: %s', request.get_data())
+        # 对敏感路由不记录请求体，防止密码泄露到日志
+        sensitive_paths = ['/api/reset-password', '/api/send-code', '/api/verify-code']
+        if request.path not in sensitive_paths:
+            app.logger.info('Body: %s', request.get_data())
+        else:
+            app.logger.info('Body: [REDACTED - sensitive endpoint]')
 
     @app.after_request
     def log_response_info(response):
