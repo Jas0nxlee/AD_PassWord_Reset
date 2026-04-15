@@ -96,10 +96,12 @@ class LDAPService:
 
     def search_user(self, username):
         """Search for a user by sAMAccountName."""
+        from ldap3.utils.conv import escape_filter_chars
         if not self.conn and not self.connect():
             return None
         
-        search_filter = f"(&(objectClass=user)(sAMAccountName={username}))"
+        escaped_username = escape_filter_chars(username)
+        search_filter = f"(&(objectClass=user)(sAMAccountName={escaped_username}))"
         try:
             self.conn.search(self.base_dn, search_filter, attributes=['distinguishedName', 'mail', 'sAMAccountName', 'cn'])
             if self.conn.entries:

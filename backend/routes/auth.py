@@ -32,15 +32,19 @@ def verify_user():
 @auth_bp.route('/send-code', methods=['POST'])
 def send_code():
     data = request.get_json()
-    if not data or not data.get('username') or not data.get('email'):
-        return jsonify({'error': 'Username and email are required'}), 400
+    if not data or not data.get('username'):
+        return jsonify({'error': 'Username is required'}), 400
     username = data.get('username')
-    email = data.get('email')
 
     # 1. 验证用户是否存在于LDAP中
     user = current_app.ldap_service.search_user(username)
     if not user:
         return jsonify({"error": "User not found"}), 404
+
+    if not hasattr(user, 'mail') or not user.mail.value:
+        return jsonify({'error': 'User found but no email address configured in LDAP'}), 404
+
+    email = user.mail.value
 
     # 2. 生成验证码
     code = verification_service.generate_code(username)
