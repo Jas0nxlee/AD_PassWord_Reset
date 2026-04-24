@@ -57,10 +57,10 @@ function App() {
 
     try {
       const result = await verifyUser(username);
-      setEmail(result.email);
+      setEmail(result.masked_email);
 
       // 发送验证码
-      await sendCode(username, result.email);
+      await sendCode(username);
       setStep('code');
       startCountdown();
     } catch (err) {
@@ -92,7 +92,7 @@ function App() {
     setError('');
 
     try {
-      await sendCode(username, email);
+      await sendCode(username);
       startCountdown();
     } catch (err) {
       handleError(err);
@@ -163,14 +163,6 @@ function App() {
 
   const passwordStrength = getPasswordStrength(password);
 
-  // 遮蔽邮箱
-  const maskEmail = (email: string): string => {
-    if (!email) return '';
-    const [local, domain] = email.split('@');
-    if (local.length <= 2) return email;
-    return `${local[0]}${'*'.repeat(local.length - 2)}${local[local.length - 1]}@${domain}`;
-  };
-
   // 重新开始
   const handleReset = () => {
     setStep('username');
@@ -215,7 +207,7 @@ function App() {
           {step === 'username' && (
             <>
               <h1 className="page-title">密码重置</h1>
-              <p className="page-subtitle">请输入您的用户名，我们将发送验证码到您的邮箱</p>
+              <p className="page-subtitle">请输入您的用户名，如账号符合条件，我们将发送验证码</p>
 
               <form onSubmit={handleVerifyUser}>
                 <div className="form-group">
@@ -243,7 +235,8 @@ function App() {
             <>
               <h1 className="page-title">输入验证码</h1>
               <p className="page-subtitle">
-                验证码已发送至 <strong>{maskEmail(email)}</strong>
+                验证码已发送，如账号符合条件
+                {email ? <>，目标邮箱为 <strong>{email}</strong></> : null}
               </p>
 
               <form onSubmit={handleVerifyCode}>

@@ -10,40 +10,57 @@ auth_bp = Blueprint('auth', __name__)
 
 import logging
 
+
+def _mask_email(email):
+    if not email or '@' not in email:
+        return ''
+    local, domain = email.split('@', 1)
+    if len(local) <= 2:
+        return f"{local[0]}*@{domain}" if local else ''
+    return f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}@{domain}"
+
+
+def _get_user_email(user_info):
+    if user_info and hasattr(user_info, 'mail') and user_info.mail.value:
+        return user_info.mail.value
+    return None
+
 @auth_bp.route('/verify-user', methods=['POST'])
 def verify_user():
     logging.info("Entered verify_user function")
     data = request.get_json()
     if not data or not data.get('username'):
         return jsonify({'error': 'Username is required'}), 400
-    username = data.get('username')
+    username = str(data.get('username')).strip()
 
-    logging.info(f"Searching for user: {username}")
+    logging.info("Searching for password reset candidate")
     user_info = current_app.ldap_service.search_user(username)
-    logging.info(f"LDAP search completed for user: {username}")
-    if user_info:
-        if hasattr(user_info, 'mail') and user_info.mail.value:
-            return jsonify({'message': 'User verified successfully', 'email': user_info.mail.value}), 200
-        else:
-            return jsonify({'error': 'User found but no email address configured'}), 404
-    else:
-        return jsonify({'error': 'User not found'}), 404
+    masked_email = _mask_email(_get_user_email(user_info))
+    logging.info("Password reset candidate lookup completed")
+    return jsonify({
+        'message': 'If the account is eligible, a verification code can be sent.',
+        'masked_email': masked_email
+    }), 200
 
 @auth_bp.route('/send-code', methods=['POST'])
 def send_code():
     data = request.get_json()
-    if not data or not data.get('username') or not data.get('email'):
-        return jsonify({'error': 'Username and email are required'}), 400
-    username = data.get('username')
-    email = data.get('email')
+    if not data or not data.get('username'):
+        return jsonify({'error': 'Username is required'}), 400
+    username = str(data.get('username')).strip()
 
     # 1. 验证用户是否存在于LDAP中
     user = current_app.ldap_service.search_user(username)
-    if not user:
-        return jsonify({"error": "User not found"}), 404
+    email = _get_user_email(user)
+    if not user or not email:
+        return jsonify({"error": "Unable to send verification email."}), 400
 
     # 2. 生成验证码
-    code = verification_service.generate_code(username)
+    code_result = verification_service.generate_code(username)
+    if not code_result['success']:
+        status_code = 429 if code_result['reason'] == 'cooldown' else 400
+        return jsonify({"error": code_result['message']}), status_code
+    code = code_result['code']
 
     # 3. 发送邮件
     subject = "Your Password Reset Code"
@@ -62,11 +79,13 @@ def verify_code():
     username = data.get('username')
     code = data.get('code')
 
-    if verification_service.verify_code(username, code):
+    verification_result = verification_service.verify_code(username, code)
+    if verification_result['success']:
         token = generate_token({'username': username})
         return jsonify({"message": "Code verified successfully", "token": token})
-    else:
-        return jsonify({"error": "Invalid or expired code"}), 400
+    if verification_result['reason'] == 'max_attempts_exceeded':
+        return jsonify({"error": verification_result['message']}), 400
+    return jsonify({"error": verification_result['message']}), 400
 
 
 @auth_bp.route('/reset-password', methods=['POST'])

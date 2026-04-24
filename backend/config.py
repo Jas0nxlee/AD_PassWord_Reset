@@ -69,6 +69,4 @@ try:
     Config.validate()
 except ValueError as e:
     print(f"Configuration Error: {e}")
-    # 在实际应用中，你可能希望在这里退出程序
-    # import sys
-    # sys.exit(1)
+    raise

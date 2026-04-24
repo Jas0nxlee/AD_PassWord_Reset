@@ -26,7 +26,7 @@ api.interceptors.request.use((config) => {
 // API 接口
 export interface VerifyUserResponse {
     message: string;
-    email: string;
+    masked_email: string;
 }
 
 export interface SendCodeResponse {
@@ -53,8 +53,8 @@ export async function verifyUser(username: string): Promise<VerifyUserResponse> 
 }
 
 // 发送验证码
-export async function sendCode(username: string, email: string): Promise<SendCodeResponse> {
-    const response = await api.post<SendCodeResponse>('/send-code', { username, email });
+export async function sendCode(username: string): Promise<SendCodeResponse> {
+    const response = await api.post<SendCodeResponse>('/send-code', { username });
     return response.data;
 }
 
