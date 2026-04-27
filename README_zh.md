@@ -95,6 +95,31 @@ npm run dev
 npm run build
 ```
 
+## 桌面程序打包与 GitHub 发布
+
+仓库已包含 `.github/workflows/release.yml`，用于通过 GitHub Actions：
+
+- 使用 Node.js 22 构建前端
+- 安装后端依赖和 `PyInstaller`
+- 分别打包 **Windows** 与 **macOS** 程序
+- 将 zip 产物上传到工作流产物
+- 当推送 `v1.0.0` 这类 tag 时自动创建或更新 GitHub Release
+
+### 触发发布
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### 说明
+
+- Windows 发布包中包含 `AD_Password_Reset.exe`，双击后会在命令行窗口中启动本地 Flask/Waitress 服务，并自动打开浏览器。
+- macOS 发布包中包含 `AD_Password_Reset.app`，双击后会启动同样的本地服务，并自动打开浏览器。
+- 两个平台的程序都会提供已构建的前端静态文件。
+- 运行时仍依赖 `.env` 以及目标 AD / SMTP 环境配置。
+- 当前工作流未包含 macOS `.app` 的签名与 notarization 配置。
+
 ## 后端测试
 
 当前已补充与密码重置加固相关的最小回归测试：

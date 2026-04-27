@@ -23,11 +23,10 @@ if __name__ == '__main__':
     print("请在浏览器中访问上述地址来使用密码重置功能")
     print("按 Ctrl+C 停止服务器")
     
-    # 在新线程中打开浏览器（仅开发环境）
-    if Config.FLASK_ENV == 'development':
-        browser_thread = threading.Thread(target=open_browser)
-        browser_thread.daemon = True
-        browser_thread.start()
+    # 打包后双击启动时也自动打开浏览器
+    browser_thread = threading.Thread(target=open_browser)
+    browser_thread.daemon = True
+    browser_thread.start()
     
     try:
         # 使用 Waitress 生产级 WSGI 服务器（跨平台）

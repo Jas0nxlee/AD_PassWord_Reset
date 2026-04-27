@@ -95,6 +95,31 @@ npm run dev
 npm run build
 ```
 
+## Desktop Build and GitHub Release
+
+This repository includes a GitHub Actions workflow at `.github/workflows/release.yml` that:
+
+- builds the frontend with Node.js 22
+- installs backend dependencies and `PyInstaller`
+- packages the app for **Windows** and **macOS**
+- uploads zipped artifacts to the workflow run
+- automatically creates or updates a GitHub Release when you push a tag like `v1.0.0`
+
+### Trigger a release
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Notes
+
+- Windows release contains `AD_Password_Reset.exe`; double-clicking it starts the local Flask/Waitress service in a console window and opens the browser automatically.
+- macOS release contains `AD_Password_Reset.app`; double-clicking it starts the same local service and opens the browser automatically.
+- Both packages serve the built frontend from `frontend/dist`.
+- Runtime configuration still depends on your `.env` and target AD/SMTP environment.
+- The macOS `.app` is not signed or notarized in this workflow.
+
 ## Backend Tests
 
 Run the regression tests added for the password reset hardening changes:
