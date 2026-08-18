@@ -1,4 +1,10 @@
+import json
 import logging
+import os
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 from flask import request
 
 audit_logger = logging.getLogger('audit')
@@ -7,22 +13,14 @@ audit_logger = logging.getLogger('audit')
 def _mask_dn(value):
     if not value:
         return ''
-    parts = [part for part in str(value).split(',') if part]
-    masked_parts = []
-    for part in parts:
+    parts = []
+    for part in str(value).split(','):
         if '=' not in part:
-            masked_parts.append(part)
+            parts.append('***')
             continue
         key, raw = part.split('=', 1)
-        key_upper = key.upper()
-        if key_upper in {'CN', 'OU'}:
-            masked = raw[0] + '***' if raw else '***'
-            masked_parts.append(f'{key}={masked}')
-        elif key_upper == 'DC':
-            masked_parts.append(f'{key}=***')
-        else:
-            masked_parts.append(f'{key}=***')
-    return ','.join(masked_parts)
+        parts.append(f'{key}={raw[:1]}***' if raw else f'{key}=***')
+    return ','.join(parts)
 
 
 def _sanitize_details(details):
@@ -31,18 +29,32 @@ def _sanitize_details(details):
         sanitized['user_dn'] = _mask_dn(sanitized['user_dn'])
     return sanitized
 
+
 def setup_audit_log(app):
-    # 配置审计日志记录器
-    if any(isinstance(handler, logging.FileHandler) and getattr(handler, 'baseFilename', '').endswith('logs/audit.log')
-           for handler in audit_logger.handlers):
-        return
-    handler = logging.FileHandler('logs/audit.log')
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+    log_dir = Path(app.config['LOG_DIR'])
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / 'audit.log'
+
+    for existing_handler in audit_logger.handlers:
+        existing_handler.close()
+    audit_logger.handlers.clear()
+    handler = RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=20)
+    handler.setFormatter(logging.Formatter('%(message)s'))
     audit_logger.addHandler(handler)
     audit_logger.setLevel(logging.INFO)
     audit_logger.propagate = False
+    try:
+        os.chmod(log_path, 0o600)
+    except OSError:
+        pass
+
 
 def audit_log(action, user, details):
-    """记录审计日志"""
-    ip_address = request.remote_addr
-    audit_logger.info(f'Action: {action}, User: {user}, IP: {ip_address}, Details: {_sanitize_details(details)}')
+    event = {
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'action': action,
+        'user': str(user).replace('\r', '').replace('\n', ''),
+        'ip': request.remote_addr,
+        'details': _sanitize_details(details),
+    }
+    audit_logger.info(json.dumps(event, ensure_ascii=False, separators=(',', ':')))

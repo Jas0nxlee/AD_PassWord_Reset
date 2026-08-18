@@ -1,36 +1,34 @@
-import itsdangerous
-from flask import current_app, request, session
-from markupsafe import escape
+import hmac
+import secrets
 
-def generate_token(data):
-    serializer = itsdangerous.URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-    return serializer.dumps(data)
+from flask import request, session
 
-def verify_token(token, max_age=3600):
-    serializer = itsdangerous.URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-    try:
-        data = serializer.loads(token, max_age=max_age)
-    except (itsdangerous.SignatureExpired, itsdangerous.BadTimeSignature, itsdangerous.BadSignature):
-        return None
-    return data
-
-def sanitize_input(data):
-    if isinstance(data, str):
-        return escape(data)
-    if isinstance(data, list):
-        return [sanitize_input(item) for item in data]
-    if isinstance(data, dict):
-        return {k: sanitize_input(v) for k, v in data.items()}
-    return data
 
 def generate_csrf_token():
     if '_csrf_token' not in session:
-        session['_csrf_token'] = generate_token('csrf')
+        session['_csrf_token'] = secrets.token_urlsafe(32)
+        session.permanent = True
     return session['_csrf_token']
 
+
 def validate_csrf_token():
-    token = session.get('_csrf_token') # Use get instead of pop to avoid removing the token
-    header_token = request.headers.get('X-CSRF-Token')
-    if not token or token != header_token:
+    expected = session.get('_csrf_token')
+    supplied = request.headers.get('X-CSRF-Token')
+    if not expected or not supplied:
         return False
-    return True
+    return hmac.compare_digest(expected, supplied)
+
+
+def password_meets_policy(password, username, min_length=12, max_length=128):
+    if not isinstance(password, str) or not min_length <= len(password) <= max_length:
+        return False
+    if username and username.casefold() in password.casefold():
+        return False
+
+    categories = [
+        any(character.islower() for character in password),
+        any(character.isupper() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() for character in password),
+    ]
+    return sum(categories) >= 3

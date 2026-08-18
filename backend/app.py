@@ -1,110 +1,114 @@
-from flask import Flask, jsonify, request, send_from_directory, send_file
-from flask_cors import CORS
+import sys
+from pathlib import Path
+
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import os
+from werkzeug.security import safe_join
 
-# 导入蓝图
+from config import Config
 from routes.auth import auth_bp
-# from routes.user import user_bp
-
-# 导入中间件
+from services.email_dispatcher import EmailDispatcher
+from services.email_service import EmailService
+from services.ldap_service import LDAPService
+from services.reset_token_service import ResetTokenService
+from services.verification_service import VerificationService
+from utils.audit import setup_audit_log
+from utils.logger import setup_logger
 from utils.middleware import register_middleware
 from utils.security import generate_csrf_token, validate_csrf_token
-from utils.logger import setup_logger
-from utils.audit import setup_audit_log
 
-# 导入配置
-from config import Config
-from services.ldap_service import LDAPService
-import logging
 
 def create_app():
-    import os
-    # Set OPENSSL_CONF environment variable before Flask app initialization
-    # This ensures OpenSSL 3.x loads the legacy provider for MD4 support
-    # os.environ['OPENSSL_CONF'] = 'd:\\Users\\jingping.li\\Desktop\\ad-reset\\legacy-openssl.cnf'
-    """创建并配置Flask应用"""
+    Config.validate()
     app = Flask(__name__)
-
-    # Configure logging
-    logging.basicConfig(level=logging.INFO)
-
-    # Initialize LDAPService
-    app.ldap_service = LDAPService()
-
-    # 从配置对象加载配置
     app.config.from_object(Config)
 
-    # 配置CORS，允许所有来源的跨域请求
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    app.ldap_service = LDAPService(app.config)
+    app.email_service = EmailService(app.config)
+    app.email_dispatcher = EmailDispatcher(
+        workers=app.config['EMAIL_WORKERS'],
+        queue_limit=app.config['EMAIL_QUEUE_LIMIT'],
+        asynchronous=app.config['EMAIL_ASYNC'],
+    )
+    app.verification_service = VerificationService(
+        expire_time=app.config['VERIFICATION_CODE_TTL'],
+        cooldown_time=app.config['VERIFICATION_CODE_COOLDOWN'],
+        max_attempts=app.config['VERIFICATION_MAX_ATTEMPTS'],
+    )
+    app.reset_token_service = ResetTokenService(ttl=app.config['RESET_TOKEN_TTL'])
 
-    # 初始化速率限制器
+    setup_logger(app)
+    setup_audit_log(app)
+    if app.config['LDAP_COMPATIBILITY_MODE']:
+        app.logger.warning('LDAP legacy certificate compatibility mode is enabled with SHA-256 pinning')
+    register_middleware(app)
+
     limiter = Limiter(
         get_remote_address,
         app=app,
-        default_limits=["200 per day", "50 per hour"],
-        storage_uri=Config.RATELIMIT_STORAGE_URI
+        default_limits=['200 per day', '50 per hour'],
+        storage_uri=app.config['RATELIMIT_STORAGE_URI'],
+        headers_enabled=True,
     )
-
-    # 注册中间件
-    register_middleware(app)
+    limiter.limit('10 per minute')(auth_bp)
 
     @app.before_request
     def csrf_protect():
-        if request.method == "POST":
-            if not validate_csrf_token():
-                return jsonify({'error': 'CSRF token missing or invalid'}), 400
+        if request.method == 'POST' and not validate_csrf_token():
+            return jsonify({'error': 'CSRF token missing or invalid'}), 400
 
     @app.after_request
-    def set_csrf_cookie(response):
-        if response:
-            response.set_cookie('csrf_token', generate_csrf_token())
+    def apply_security_headers(response):
+        response.set_cookie(
+            'csrf_token',
+            generate_csrf_token(),
+            secure=app.config['CSRF_COOKIE_SECURE'],
+            httponly=False,
+            samesite='Strict',
+            path='/',
+        )
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"
+        )
+        if request.path.startswith('/api/') or response.mimetype == 'text/html':
+            response.headers['Cache-Control'] = 'no-store'
         return response
 
-    # 对认证蓝图应用速率限制
-    limiter.limit("10 per minute")(auth_bp)
-
-    # 注册蓝图
     app.register_blueprint(auth_bp, url_prefix='/api')
 
-    # 设置日志
-    setup_logger(app)
-    setup_audit_log(app)
-    # app.register_blueprint(user_bp, url_prefix='/api/user')
+    if getattr(sys, 'frozen', False):
+        project_root = Path(sys._MEIPASS)
+    else:
+        project_root = Path(__file__).resolve().parent.parent
+    frontend_path = project_root / 'frontend' / 'dist'
 
-    # 基本的健康检查路由
     @app.route('/health')
     def health_check():
-        return jsonify({"status": "ok"}), 200
+        return jsonify({'status': 'ok'}), 200
 
-    # 静态文件路由
     @app.route('/')
     def serve_frontend():
-        frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend', 'dist')
-        return send_file(os.path.join(frontend_path, 'index.html'))
+        return send_file(frontend_path / 'index.html')
 
     @app.route('/<path:path>')
     def serve_static(path):
-        frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend', 'dist')
-        file_path = os.path.join(frontend_path, path)
-        if os.path.exists(file_path):
-            return send_file(file_path)
-        # 如果文件不存在，返回index.html用于SPA路由
-        return send_file(os.path.join(frontend_path, 'index.html'))
+        resolved = safe_join(str(frontend_path), path)
+        if resolved is None:
+            return 'Not Found', 404
+        resolved_path = Path(resolved)
+        if resolved_path.is_file():
+            return send_from_directory(frontend_path, path)
+        return send_file(frontend_path / 'index.html')
 
-    # 注册错误处理器
     @app.errorhandler(404)
     def not_found_error(error):
-        # 对于API路由返回JSON错误，对于其他路由返回前端页面
         if request.path.startswith('/api/'):
-            return jsonify({"error": "Not Found"}), 404
-        else:
-            frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frontend', 'dist')
-            return send_file(os.path.join(frontend_path, 'index.html'))
-
-    @app.errorhandler(500)
-    def internal_error(error):
-        return jsonify({"error": "Internal Server Error"}), 500
+            return jsonify({'error': 'Not Found'}), 404
+        return 'Not Found', 404
 
     return app
