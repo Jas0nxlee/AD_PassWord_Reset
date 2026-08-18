@@ -1,92 +1,110 @@
-import random
+import hashlib
+import hmac
+import secrets
 import string
+import threading
 import time
 
+
+def normalize_username(username):
+    if not isinstance(username, str):
+        return ''
+    return username.strip().casefold()
+
+
 class VerificationService:
-    def __init__(self):
+    """线程安全的单进程验证码存储。"""
+
+    def __init__(self, expire_time=300, cooldown_time=60, max_attempts=5):
         self.codes = {}
         self.code_length = 6
-        self.expire_time = 300  # 验证码有效期为5分钟
-        self.cooldown_time = 60  # 验证码发送冷却时间（秒）
-        self.max_attempts = 5
+        self.expire_time = expire_time
+        self.cooldown_time = cooldown_time
+        self.max_attempts = max_attempts
+        self._lock = threading.RLock()
 
-    def generate_code(self, identifier):
-        """为指定标识符生成验证码"""
-        # 清理过期验证码，防止内存泄漏
-        self._cleanup_expired()
+    @staticmethod
+    def _digest(code):
+        return hashlib.sha256(code.encode('utf-8')).hexdigest()
 
-        existing_record = self.codes.get(identifier)
-        if existing_record and time.time() - existing_record['sent_at'] < self.cooldown_time:
-            return {
-                'success': False,
-                'reason': 'cooldown',
-                'message': 'Verification code was sent recently. Please wait before requesting another code.'
+    def begin_code(self, username):
+        """原子保留一个待发送验证码，避免并发绕过冷却。"""
+        identifier = normalize_username(username)
+        if not identifier:
+            return {'success': False, 'reason': 'invalid'}
+
+        now = time.monotonic()
+        with self._lock:
+            self._cleanup_locked(now)
+            existing = self.codes.get(identifier)
+            if existing and now - existing['sent_at'] < self.cooldown_time:
+                return {'success': False, 'reason': 'cooldown'}
+
+            code = ''.join(secrets.choice(string.digits) for _ in range(self.code_length))
+            reservation = secrets.token_hex(16)
+            self.codes[identifier] = {
+                'code_digest': self._digest(code),
+                'created_at': now,
+                'sent_at': now,
+                'failed_attempts': 0,
+                'active': False,
+                'reservation': reservation,
             }
-
-        code = ''.join(random.choices(string.digits, k=self.code_length))
-        self.codes[identifier] = {
-            'code': code,
-            'timestamp': time.time(),
-            'sent_at': time.time(),
-            'failed_attempts': 0
-        }
-        return {
-            'success': True,
-            'reason': 'sent',
-            'message': 'Verification code generated successfully.',
-            'code': code
-        }
-
-    def _cleanup_expired(self):
-        """清理所有已过期的验证码"""
-        current_time = time.time()
-        expired_keys = [k for k, v in self.codes.items() 
-                        if current_time - v['timestamp'] > self.expire_time]
-        for key in expired_keys:
-            del self.codes[key]
-
-    def verify_code(self, identifier, code):
-        """验证指定标识符的验证码"""
-        if identifier not in self.codes:
-            return {
-                'success': False,
-                'reason': 'missing',
-                'message': 'Invalid or expired code.'
-            }
-
-        stored_code_info = self.codes[identifier]
-        if time.time() - stored_code_info['timestamp'] > self.expire_time:
-            # 验证码已过期
-            del self.codes[identifier]
-            return {
-                'success': False,
-                'reason': 'expired',
-                'message': 'Invalid or expired code.'
-            }
-
-        if stored_code_info['code'] == code:
-            # 验证成功后删除验证码
-            del self.codes[identifier]
             return {
                 'success': True,
-                'reason': 'verified',
-                'message': 'Code verified successfully.'
+                'reason': 'pending',
+                'code': code,
+                'reservation': reservation,
             }
 
-        stored_code_info['failed_attempts'] += 1
-        if stored_code_info['failed_attempts'] >= self.max_attempts:
-            del self.codes[identifier]
-            return {
-                'success': False,
-                'reason': 'max_attempts_exceeded',
-                'message': 'Verification code has expired. Please request a new code.'
-            }
+    def activate_code(self, username, reservation):
+        identifier = normalize_username(username)
+        with self._lock:
+            record = self.codes.get(identifier)
+            if not record or record['reservation'] != reservation:
+                return False
+            record['active'] = True
+            return True
 
-        return {
-            'success': False,
-            'reason': 'invalid',
-            'message': 'Invalid or expired code.'
+    def discard_code(self, username, reservation):
+        identifier = normalize_username(username)
+        with self._lock:
+            record = self.codes.get(identifier)
+            if record and record['reservation'] == reservation:
+                del self.codes[identifier]
+
+    def verify_code(self, username, code):
+        identifier = normalize_username(username)
+        if not identifier or not isinstance(code, str):
+            return self._failure('missing', 'Invalid or expired code.')
+
+        now = time.monotonic()
+        with self._lock:
+            self._cleanup_locked(now)
+            record = self.codes.get(identifier)
+            if not record or not record['active']:
+                return self._failure('missing', 'Invalid or expired code.')
+
+            if hmac.compare_digest(record['code_digest'], self._digest(code)):
+                del self.codes[identifier]
+                return {'success': True, 'reason': 'verified', 'message': 'Code verified successfully.'}
+
+            record['failed_attempts'] += 1
+            if record['failed_attempts'] >= self.max_attempts:
+                del self.codes[identifier]
+                return self._failure(
+                    'max_attempts_exceeded',
+                    'Verification code has expired. Please request a new code.',
+                )
+            return self._failure('invalid', 'Invalid or expired code.')
+
+    def _cleanup_locked(self, now):
+        self.codes = {
+            identifier: record
+            for identifier, record in self.codes.items()
+            if now - record['created_at'] <= self.expire_time
         }
 
-# 实例化服务
-verification_service = VerificationService()
+    @staticmethod
+    def _failure(reason, message):
+        return {'success': False, 'reason': reason, 'message': message}

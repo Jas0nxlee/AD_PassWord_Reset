@@ -41,7 +41,7 @@
   --radius-full: 9999px;
 
   /* 字体 */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   /* 过渡 */
   --transition-fast: 150ms ease;
@@ -120,6 +120,12 @@ body {
   border-color: var(--color-primary);
   background: var(--color-card);
   box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.verification-code-input {
+  text-align: center;
+  letter-spacing: 0.5em;
+  font-size: 1.25rem;
 }
 
 .form-input::placeholder {
@@ -349,10 +355,19 @@ body {
   color: var(--color-primary);
   cursor: pointer;
   font-weight: 500;
+  background: transparent;
+  border: 0;
+  font: inherit;
 }
 
 .countdown-resend:hover {
   text-decoration: underline;
+}
+
+.countdown-resend:focus-visible,
+.btn:focus-visible {
+  outline: 3px solid var(--color-primary-light);
+  outline-offset: 3px;
 }
 
 /* 成功页面 */

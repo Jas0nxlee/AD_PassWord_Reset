@@ -45,6 +45,7 @@ env/
 # -----------
 *.manifest
 *.spec
+!build/reset-password-app.spec
 
 
 

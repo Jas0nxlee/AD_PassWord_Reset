@@ -1,118 +1,136 @@
-from flask import Blueprint, jsonify, request
-from utils.security import generate_token, verify_token
-from flask import current_app
-from services.email_service import email_service
-from services.verification_service import verification_service
-from utils.audit import audit_log
-
-# 创建一个名为'auth'的蓝图
-auth_bp = Blueprint('auth', __name__)
-
 import logging
 
+from flask import Blueprint, current_app, jsonify, request
 
-def _mask_email(email):
-    if not email or '@' not in email:
-        return ''
-    local, domain = email.split('@', 1)
-    if len(local) <= 2:
-        return f"{local[0]}*@{domain}" if local else ''
-    return f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}@{domain}"
+from utils.audit import audit_log
+from utils.security import password_meets_policy
+
+auth_bp = Blueprint('auth', __name__)
+logger = logging.getLogger(__name__)
+
+GENERIC_CODE_RESPONSE = {
+    'message': 'If the account is eligible, a verification code will be sent.'
+}
 
 
-def _get_user_email(user_info):
-    if user_info and hasattr(user_info, 'mail') and user_info.mail.value:
-        return user_info.mail.value
-    return None
+def _username_from(data):
+    username = data.get('username') if isinstance(data, dict) else None
+    if not isinstance(username, str):
+        return None
+    username = username.strip()
+    if not username or len(username) > 128 or any(ord(character) < 32 for character in username):
+        return None
+    return username
+
+
+def _deliver_verification_code(email_service, verification_service, username, email, subject, body, reservation):
+    if email_service.send_email(email, subject, body):
+        verification_service.activate_code(username, reservation)
+    else:
+        verification_service.discard_code(username, reservation)
+        logger.error('Unable to deliver verification code')
+
+
+@auth_bp.route('/csrf', methods=['GET'])
+def csrf_token():
+    return '', 204
+
 
 @auth_bp.route('/verify-user', methods=['POST'])
 def verify_user():
-    logging.info("Entered verify_user function")
     data = request.get_json()
-    if not data or not data.get('username'):
+    if not _username_from(data):
         return jsonify({'error': 'Username is required'}), 400
-    username = str(data.get('username')).strip()
+    return jsonify(GENERIC_CODE_RESPONSE), 200
 
-    logging.info("Searching for password reset candidate")
-    user_info = current_app.ldap_service.search_user(username)
-    masked_email = _mask_email(_get_user_email(user_info))
-    logging.info("Password reset candidate lookup completed")
-    return jsonify({
-        'message': 'If the account is eligible, a verification code can be sent.',
-        'masked_email': masked_email
-    }), 200
 
 @auth_bp.route('/send-code', methods=['POST'])
 def send_code():
     data = request.get_json()
-    if not data or not data.get('username'):
+    username = _username_from(data)
+    if not username:
         return jsonify({'error': 'Username is required'}), 400
-    username = str(data.get('username')).strip()
 
-    # 1. 验证用户是否存在于LDAP中
     user = current_app.ldap_service.search_user(username)
-    email = _get_user_email(user)
-    if not user or not email:
-        return jsonify({"error": "Unable to send verification email."}), 400
+    if not user or not user.email:
+        return jsonify(GENERIC_CODE_RESPONSE), 200
 
-    # 2. 生成验证码
-    code_result = verification_service.generate_code(username)
+    code_result = current_app.verification_service.begin_code(username)
     if not code_result['success']:
-        status_code = 429 if code_result['reason'] == 'cooldown' else 400
-        return jsonify({"error": code_result['message']}), status_code
-    code = code_result['code']
+        return jsonify(GENERIC_CODE_RESPONSE), 200
 
-    # 3. 发送邮件
-    subject = "Your Password Reset Code"
-    body = f"Your verification code is: {code}"
-    if not email_service.send_email(email, subject, body):
-        return jsonify({"error": "Failed to send verification email"}), 500
-
-    return jsonify({"message": "Verification code sent successfully"})
+    subject = 'Your Password Reset Code'
+    body = (
+        f"Your verification code is: {code_result['code']}\n\n"
+        'This code expires in 5 minutes. If you did not request it, ignore this email.'
+    )
+    queued = current_app.email_dispatcher.submit(
+        _deliver_verification_code,
+        current_app.email_service,
+        current_app.verification_service,
+        username,
+        user.email,
+        subject,
+        body,
+        code_result['reservation'],
+    )
+    if not queued:
+        current_app.verification_service.discard_code(username, code_result['reservation'])
+    return jsonify(GENERIC_CODE_RESPONSE), 200
 
 
 @auth_bp.route('/verify-code', methods=['POST'])
 def verify_code():
     data = request.get_json()
-    if not data or not data.get('username') or not data.get('code'):
-        return jsonify({'error': 'Username and code are required'}), 400
-    username = data.get('username')
-    code = data.get('code')
+    username = _username_from(data)
+    code = data.get('code') if isinstance(data, dict) else None
+    if not username or not isinstance(code, str) or len(code) != 6 or not code.isdigit():
+        return jsonify({'error': 'Username and a 6-digit code are required'}), 400
 
-    verification_result = verification_service.verify_code(username, code)
-    if verification_result['success']:
-        token = generate_token({'username': username})
-        return jsonify({"message": "Code verified successfully", "token": token})
-    if verification_result['reason'] == 'max_attempts_exceeded':
-        return jsonify({"error": verification_result['message']}), 400
-    return jsonify({"error": verification_result['message']}), 400
+    result = current_app.verification_service.verify_code(username, code)
+    if not result['success']:
+        return jsonify({'error': result['message']}), 400
+
+    token = current_app.reset_token_service.issue(username)
+    return jsonify({'message': 'Code verified successfully', 'token': token}), 200
 
 
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
-    logging.info("Entered reset_password function")
     data = request.get_json()
-    if not data or not data.get('username') or not data.get('new_password') or not data.get('token'):
+    username = _username_from(data)
+    new_password = data.get('new_password') if isinstance(data, dict) else None
+    token = data.get('token') if isinstance(data, dict) else None
+    if not username or not isinstance(new_password, str) or not isinstance(token, str):
         return jsonify({'error': 'Username, new password and token are required'}), 400
-    username = data.get('username')
-    new_password = data.get('new_password')
-    token = data.get('token')
 
-    # 1. 验证令牌
-    token_data = verify_token(token)
-    if not token_data or token_data.get('username') != username:
+    if not password_meets_policy(
+        new_password,
+        username,
+        current_app.config['PASSWORD_MIN_LENGTH'],
+        current_app.config['PASSWORD_MAX_LENGTH'],
+    ):
+        return jsonify({'error': 'Password does not meet policy requirements'}), 400
+
+    if not current_app.reset_token_service.consume(token, username):
+        audit_log('PASSWORD_RESET_REJECTED', username, {'reason': 'invalid_or_used_token'})
         return jsonify({'error': 'Invalid or expired token'}), 401
 
-    # 2. 获取用户的DN
-    user_info = current_app.ldap_service.search_user(username)
-    if not user_info:
-        return jsonify({"error": "User not found"}), 404
-    user_dn = user_info.distinguishedName.value
+    user = current_app.ldap_service.search_user(username)
+    if not user:
+        audit_log('PASSWORD_RESET_FAILURE', username, {'reason': 'user_not_found'})
+        return jsonify({'error': 'Unable to reset password'}), 400
 
-    # 3. 重置密码
-    if current_app.ldap_service.reset_password(user_dn, new_password):
-        audit_log('PASSWORD_RESET_SUCCESS', username, {'user_dn': user_dn})
-        return jsonify({"message": "Password reset successfully"})
-    else:
-        audit_log('PASSWORD_RESET_FAILURE', username, {'user_dn': user_dn, 'error': 'LDAP password reset failed'})
-        return jsonify({"error": "Failed to reset password"}), 500
+    if not current_app.ldap_service.reset_password(user.distinguished_name, new_password):
+        audit_log('PASSWORD_RESET_FAILURE', username, {'user_dn': user.distinguished_name})
+        return jsonify({'error': 'Failed to reset password'}), 500
+
+    audit_log('PASSWORD_RESET_SUCCESS', username, {'user_dn': user.distinguished_name})
+    if user.email:
+        current_app.email_dispatcher.submit(
+            current_app.email_service.send_email,
+            user.email,
+            'Your password was reset',
+            'Your Active Directory password was reset. Contact support immediately if this was not you.',
+        )
+    return jsonify({'message': 'Password reset successfully'}), 200

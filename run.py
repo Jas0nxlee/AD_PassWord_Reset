@@ -1,55 +1,37 @@
-import sys
 import os
-import webbrowser
+import sys
 import threading
 import time
-import logging
+import webbrowser
 
-# 添加backend目录到Python路径
+from waitress import serve
+
 sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
+
 from app import create_app
 from config import Config
 
+
 def open_browser():
-    """延迟打开浏览器"""
-    time.sleep(2)  # 等待服务器启动
-    webbrowser.open('http://localhost:5002')
+    time.sleep(1)
+    webbrowser.open(f'http://{Config.SERVER_HOST}:{Config.SERVER_PORT}')
+
 
 app = create_app()
 
+
 if __name__ == '__main__':
-    print("正在启动密码重置应用...")
-    print("服务器将在 http://0.0.0.0:5002 启动")
-    print("请在浏览器中访问上述地址来使用密码重置功能")
-    print("按 Ctrl+C 停止服务器")
-    
-    # 打包后双击启动时也自动打开浏览器
-    browser_thread = threading.Thread(target=open_browser)
-    browser_thread.daemon = True
-    browser_thread.start()
-    
-    try:
-        # 使用 Waitress 生产级 WSGI 服务器（跨平台）
-        from waitress import serve
-        
-        print("\n使用 Waitress WSGI 服务器")
-        print("=" * 50)
-        
-        serve(
-            app,
-            host='0.0.0.0',
-            port=5002,
-            threads=6,              # 并发线程数
-            channel_timeout=120,    # 请求超时（秒）
-            backlog=2048,          # 连接队列大小
-            connection_limit=1000, # 最大并发连接数
-            cleanup_interval=30,   # 清理间隔（秒）
-            # url_scheme='https'   # 如果在反向代理后面使用 HTTPS，取消注释
-        )
-    except ImportError:
-        # 如果 Waitress 未安装，回退到 Flask 开发服务器（仅用于测试）
-        logging.warning("Waitress 未安装，使用 Flask 开发服务器（不推荐生产环境）")
-        logging.warning("请运行: pip install waitress")
-        app.run(host='0.0.0.0', port=5002, debug=False, use_reloader=False)
-    except KeyboardInterrupt:
-        print("\n服务器已停止")
+    print(f'密码重置服务正在 http://{Config.SERVER_HOST}:{Config.SERVER_PORT} 启动')
+    if Config.OPEN_BROWSER and Config.SERVER_HOST in {'127.0.0.1', 'localhost', '::1'}:
+        browser_thread = threading.Thread(target=open_browser, daemon=True)
+        browser_thread.start()
+    serve(
+        app,
+        host=Config.SERVER_HOST,
+        port=Config.SERVER_PORT,
+        threads=6,
+        channel_timeout=30,
+        backlog=128,
+        connection_limit=100,
+        cleanup_interval=30,
+    )

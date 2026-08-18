@@ -2,181 +2,97 @@
 
 [English](README.md) | 中文
 
-一个基于 Web 的 Active Directory 用户密码重置应用，支持邮箱验证码验证、审计日志，以及加固后的密码重置流程。
+一个基于 Flask、React 和 Active Directory 的自助密码重置应用。验证码与一次性重置事务保存在当前进程内，不依赖 Redis。
 
-## 功能特性
+## 安全特性
 
-- 🔐 Active Directory 密码重置流程
-- 📧 邮箱验证码发送与校验
-- 🛡️ 密码重置成功 / 失败审计日志
-- 🚀 React + TypeScript 前端界面
-- 🔒 请求日志敏感字段脱敏
-- ⏱️ 验证码发送冷却与错误次数限制
+- 仅允许验证服务器证书的 LDAPS，不会降级到明文 LDAP
+- 每次 LDAP 操作使用独立连接，避免多线程共享连接状态
+- 使用密码学安全随机数生成验证码和重置令牌
+- 验证码、冷却、失败次数和令牌消费均受进程内锁保护
+- 重置令牌有效期短且只能使用一次
+- 用户存在与否返回相同的验证码请求响应
+- 后端强制密码策略、CSRF 校验、请求体大小限制和安全响应头
+- 应用日志不记录请求头、请求体、验证码、令牌或密码
 
-## 技术栈
+## 运行要求
 
-- **后端**：Python + Flask
-- **前端**：React + TypeScript + Vite
-- **目录服务**：LDAP / Active Directory
-- **邮件服务**：SMTP
-- **测试**：pytest
-- **日志**：Python logging + 滚动日志文件
+- Python 3.12
+- Node.js 22 LTS
+- 可通过 LDAPS 访问的 Active Directory
+- 支持 TLS 且证书可信的 SMTP 服务
 
-## 环境要求
-
-- Python 3.8+
-- 推荐 Node.js 22 LTS
-- Active Directory 环境
-- SMTP 邮件服务
-
-## 快速开始
-
-1. **克隆项目**
-   ```bash
-   git clone <repository-url>
-   cd AD_PassWord_Reset
-   ```
-
-2. **安装后端依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **配置环境变量**
-   在项目根目录创建 `.env`，至少包含：
-   ```env
-   LDAP_SERVER=...
-   LDAP_PORT=636
-   LDAP_BASE_DN=...
-   LDAP_DOMAIN=...
-   LDAP_USER=...
-   LDAP_PASSWORD=...
-   SMTP_SERVER=...
-   SMTP_PORT=465
-   SMTP_USERNAME=...
-   SMTP_PASSWORD=...
-   SERVER_IP=127.0.0.1
-   SECRET_KEY=请替换为强随机值
-   FLASK_ENV=production
-   FLASK_DEBUG=False
-   RATELIMIT_STORAGE_URI=memory://
-   ```
-
-4. **安装前端依赖**
-   ```bash
-   cd frontend
-   npm install
-   cd ..
-   ```
-
-5. **运行应用**
-   ```bash
-   python run.py
-   ```
-
-   应用默认启动在 [http://localhost:5001](http://localhost:5001)。
-
-## 推荐 Node 配置
-
-本项目已使用 **Node.js 22 LTS** 验证通过。
-
-如果你把 Node 安装在 `~/.local/node`，建议优先加入 PATH：
+## 本地启动
 
 ```bash
-export PATH="$HOME/.local/node/node-v22.22.2-darwin-arm64/bin:$PATH"
-```
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
 
-## 前端命令
+cp .env.example .env
+# 编辑 .env，填写真实配置并生成 SECRET_KEY
 
-```bash
 cd frontend
-npm install
-npm run dev
+npm ci
 npm run build
+cd ..
+
+python run.py
 ```
 
-## 桌面程序打包与 GitHub 发布
+默认仅监听 [http://127.0.0.1:5002](http://127.0.0.1:5002)。
 
-仓库已包含 `.github/workflows/release.yml`，用于通过 GitHub Actions：
+## 配置迁移说明
 
-- 使用 Node.js 22 构建前端
-- 安装后端依赖和 `PyInstaller`
-- 分别打包 **Windows** 与 **macOS** 程序
-- 将 zip 产物上传到工作流产物
-- 当推送 `v1.0.0` 这类 tag 时自动创建或更新 GitHub Release
+安全重构后，以下配置是强制要求：
 
-### 触发发布
+- `SECRET_KEY` 必须至少 32 个字符，且不能使用示例值
+- `LDAP_USE_SSL=true`
+- `LDAP_VERIFY_CERT=true`
+- `LDAP_DOMAIN` 和 `LDAP_AUTH_MODE` 必须明确配置
+- 内部 CA 未安装到系统信任链时，需要设置 `LDAP_CA_CERT_PATH`
+- SMTP 证书验证不能关闭
+
+如果旧 `.env` 中包含 `LDAP_VERIFY_CERT=false`，应用会拒绝启动。请先部署可信 CA，不要通过关闭校验恢复运行。
+
+如果短期内无法更换旧 SHA-1 证书，可以显式启用 `LDAP_COMPATIBILITY_MODE=true`，并通过 `LDAP_CERT_SHA256` 固定当前证书指纹。兼容模式会在发送绑定凭据前校验证书指纹，但它仍是临时方案：证书更新后必须同步更新指纹，长期仍应迁移到受信任的 SHA-256 证书。
+
+## 单进程限制
+
+按当前设计，验证码、一次性重置令牌和速率限制均使用进程内存储：
+
+- 只能运行一个 Waitress 应用进程，但可以使用多个线程
+- 不支持多实例或水平扩容
+- 服务重启后，未完成的验证码与重置事务会失效
+- 如果未来需要多实例部署，必须先替换为共享且支持原子操作的状态存储
+
+## 验证命令
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+pytest -q
+
+cd frontend
+npm run lint
+npm run build
+npm audit --omit=dev
+cd ..
+
+pip-audit -r requirements.txt
 ```
 
-### 说明
+## 生产部署
 
-- Windows 发布包中包含 `AD_Password_Reset.exe`，双击后会在命令行窗口中启动本地 Flask/Waitress 服务，并自动打开浏览器。
-- macOS 发布包中包含 `AD_Password_Reset.app`，双击后会启动同样的本地服务，并自动打开浏览器。
-- 两个平台的程序都会提供已构建的前端静态文件。
-- 运行时仍依赖 `.env` 以及目标 AD / SMTP 环境配置。
-- 当前工作流未包含 macOS `.app` 的签名与 notarization 配置。
+- 桌面/单机模式保持 `SERVER_HOST=127.0.0.1` 和 `COOKIE_SECURE=false`
+- 对外服务必须部署在 HTTPS 反向代理后，设置 `SERVER_HOST=0.0.0.0` 与 `COOKIE_SECURE=true`
+- 反向代理应限制来源网络、请求大小和连接速率
+- LDAP 服务账号只授予目标 OU 的密码重置权限
+- 定期轮换 LDAP、SMTP 凭据与 `SECRET_KEY`
+- 监控并妥善保留 `logs/app.log` 和 `logs/audit.log`
 
-## 后端测试
+## 打包发布
 
-当前已补充与密码重置加固相关的最小回归测试：
+`.github/workflows/release.yml` 会在构建前运行后端测试、前端 lint/build 和依赖审计，然后生成 Windows 与 macOS 包。推送 `v*` 标签时会发布 GitHub Release。
 
-```bash
-$HOME/Library/Python/3.9/bin/pytest -q tests/test_auth_security.py
-```
+macOS 包当前未签名或 notarize，正式分发前仍需补充签名流程。
 
-覆盖场景包括：
-
-- `/api/verify-user` 返回掩码邮箱
-- `/api/send-code` 仅依赖 `username`
-- 验证码发送冷却限制
-- 验证码连续输错后失效
-- 缺失必填环境变量时配置校验失败
-
-## 日志说明
-
-应用日志输出到：
-
-- `logs/app.log`
-- `logs/audit.log`
-
-当前日志行为：
-
-- 请求 / 响应日志会脱敏密码、token、验证码、邮箱、Cookie 等敏感字段
-- SMTP 发送日志会脱敏目标邮箱
-- 审计日志会保留成功 / 失败事件，同时对 DN 做脱敏
-
-如需在新一轮验证前清空日志：
-
-```bash
-: > logs/app.log
-: > logs/audit.log
-```
-
-## 安全说明
-
-- 不要提交 `.env` 文件或真实凭据。
-- 生产环境请使用 LDAPS / 安全 SMTP。
-- 建议定期检查审计日志。
-- 当前验证码存储为进程内内存，服务重启后未完成的验证码会丢失。
-- 历史旧日志不会因为新的脱敏规则而自动回写。
-
-## 项目结构
-
-```text
-AD_PassWord_Reset/
-├── backend/                # Flask 后端
-│   ├── app.py
-│   ├── config.py
-│   ├── routes/
-│   ├── services/
-│   └── utils/
-├── frontend/               # React + TypeScript 前端
-├── logs/                   # 运行日志
-├── tests/                  # pytest 回归测试
-├── requirements.txt
-└── run.py
-```
+打包运行时，Windows 将 `.env` 放在程序目录；macOS 将 `.env` 放在 `.app` 文件旁边。
