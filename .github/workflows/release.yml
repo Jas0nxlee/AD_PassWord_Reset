@@ -32,7 +32,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         timeout-minutes: 10
-        run: npm ci
+        run: npm ci --no-audit --prefer-offline
 
       - name: Lint frontend
         working-directory: frontend
@@ -90,7 +90,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         timeout-minutes: 10
-        run: npm ci
+        run: npm ci --no-audit --prefer-offline
 
       - name: Build frontend
         working-directory: frontend
@@ -139,7 +139,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         timeout-minutes: 10
-        run: npm ci
+        run: npm ci --no-audit --prefer-offline
 
       - name: Build frontend
         working-directory: frontend
