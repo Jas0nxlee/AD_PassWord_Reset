@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -24,13 +29,28 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install and verify frontend
+      - name: Install frontend dependencies
         working-directory: frontend
+        timeout-minutes: 10
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        timeout-minutes: 5
         run: |
-          npm ci
-          npm run lint
-          npm run build
-          npm audit
+          for attempt in 1 2 3; do
+            npm audit && exit 0
+            if [ "$attempt" -lt 3 ]; then sleep 10; fi
+          done
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -69,6 +89,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
+        timeout-minutes: 10
         run: npm ci
 
       - name: Build frontend
@@ -117,6 +138,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
+        timeout-minutes: 10
         run: npm ci
 
       - name: Build frontend
@@ -141,7 +163,7 @@ jobs:
           path: dist/AD_Password_Reset-macos.zip
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
     needs:
       - build-windows
       - build-macos
@@ -163,7 +185,9 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: |
             release-assets/AD_Password_Reset-windows.zip
             release-assets/AD_Password_Reset-macos.zip
           generate_release_notes: true
+          fail_on_unmatched_files: true
