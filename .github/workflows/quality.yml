@@ -36,12 +36,7 @@ jobs:
       - name: Audit frontend dependencies
         working-directory: frontend
         timeout-minutes: 5
-        run: |
-          for attempt in 1 2 3; do
-            npm audit && exit 0
-            if [ "$attempt" -lt 3 ]; then sleep 10; fi
-          done
-          exit 1
+        run: bash ../scripts/npm-audit-ci.sh
 
       - name: Setup Python
         uses: actions/setup-python@v5
